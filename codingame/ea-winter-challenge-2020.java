@@ -41,7 +41,11 @@ class Player {
                 base.health = health;
                 base.mana = mana;
             }
+            // remove all monsters, we'll repopulate the list soon
             monsters.clear();
+            // remove enemy heroes
+            while (heroes.size() > heroCount)
+                heroes.remove(heroes.size() - 1);
         }
 
         Monster updateMonster(int id, int x, int y, int vx, int vy, int health, int shield) {
@@ -77,6 +81,8 @@ class Player {
             }
             h.pos.x = x;
             h.pos.y = y;
+            h.sp = shield;
+            h.controlled = controlled;
         }
 
         Hero getHero(int idx) {
@@ -93,18 +99,18 @@ class Player {
         }
 
         void thinkOffensive() {
-            Hero a = null;
+            Hero att = null;
             ArrayList<Hero> list = new ArrayList<>(heroes);
             for (Hero h : list)
                 if (h.goal == Goal.ATTACK)
-                    a = h;
-            if (a == null)
-                a = getClosest(list, baseOp.pos.x, baseOp.pos.y);
-            list.remove(a);
-            Hero top = list.remove(1);
-            Hero bot = list.remove(0);
+                    att = h;
+            if (att == null)
+                att = getClosest(list, baseOp.pos.x, baseOp.pos.y);
+            list.remove(att);
+            Hero top = list.get(1);
+            Hero bot = list.get(0);
 
-            //System.err.println("a " + a.id + " t " + top.id + " b " + bot.id);
+            // System.err.println("a " + a.id + " t " + top.id + " b " + bot.id);
 
             final Vector2D v = new Vector2D();
             // spread defence
@@ -127,8 +133,13 @@ class Player {
                 }
 
             }
+
+            planDefence(new ArrayList<>(list));
+
             top.think(this);
             bot.think(this);
+
+            forceOpponentsOut(list);
 
             // move attacker in enemy base
             {
@@ -137,54 +148,36 @@ class Player {
                 v.normalize();
                 v.multiply(2000);
                 v.rotateBy(Math.toRadians(15));
-                a.attackAt(baseOp.pos);
+                att.attackAt(v);
             }
-            a.think(this);
+            att.think(this);
         }
 
-        void thinkDefensive() {
-            // set main goal
-            spread();
+        void planDefence(Collection<Hero> list) {
+            // remove controlled heroes
+            for (Iterator<Hero> it = list.iterator(); it.hasNext();)
+                if (it.next().controlled)
+                    it.remove();
 
-            // update heroes
-            getHero(0).think(this);
-            getHero(1).think(this);
-            getHero(2).think(this);
+            // predict monster attack
+            ArrayList<Monster> baseAttackers = getBaseAttackers();
+            final Vector2D v = new Vector2D();
+            // sort based on distance from base
+            baseAttackers.sort((m1, m2) -> {
+                v.set(m1.pos);
+                v.subtract(base.pos);
+                double d1 = v.getLengthSq();
 
-            // protect base
-            Collection<Monster> baseAttackers = getBaseAttackers();
+                v.set(m2.pos);
+                v.subtract(base.pos);
+                double d2 = v.getLengthSq();
+
+                return Double.compare(d1, d2);
+            });
             for (Monster m : baseAttackers) {
-                int radiusSq = Monster.BASE_TARGET_DISTANCE * Monster.BASE_TARGET_DISTANCE;
-                Vector2D S1;
-                Vector2D h = Vector2D.subtract(base.pos, m.pos); // h=r.o-c.M
-                if (h.getLengthSq() > radiusSq) {
-                    Vector2D e = new Vector2D(m.move.x, m.move.y); // e=ray.dir
-                    e.normalize(); // e=g/|g|
-                    double lf = e.dot(h); // lf=e.h
-                    double s = radiusSq - h.dot(h) + lf * lf; // s=r^2-h^2+lf^2
-                    if (s < 0)
-                        continue; // no intersection points ?
-                    s = Math.sqrt(s); // s=sqrt(r^2-h^2+lf^2)
-
-                    // int result = 0;
-                    if (lf < s) // S1 behind A ?
-                    {
-                        if (lf + s >= 0) // S2 before A ?}
-                        {
-                            s = -s; // swap S1 <-> S2}
-                            // result = 1; // one intersection point
-                        }
-                    } // else result = 2; // 2 intersection points
-
-                    S1 = e.getMultiplied(lf - s);
-                    S1.add(m.pos); // S1=A+e*(lf-s)
-                } else {
-                    S1 = new Vector2D(m.pos.x, m.pos.y);
-                    S1.add(m.move);
-                }
+                Vector2D S1 = m.getAttackLocation(this);
 
                 // S1 is now the position we expect the monster to start targeting the base
-                ArrayList<Hero> list = new ArrayList<>(heroes);
                 while (!list.isEmpty()) {
                     Hero hero = getClosest(list, (int) S1.x, (int) S1.y);
                     if (hero.follow == m || hero.goal != Goal.DEFEND) {
@@ -194,9 +187,60 @@ class Player {
                     list.remove(hero);
                 }
             }
+
         }
 
-        Collection<Monster> getBaseAttackers() {
+        void forceOpponentsOut(Collection<Hero> list) {
+            for (int idx = 3; idx < heroes.size(); idx += 1) {
+                Hero opp = heroes.get(idx);
+                if (opp.controlled)
+                    continue;
+                for (Iterator<Hero> it = list.iterator(); it.hasNext();) {
+                    Hero h = it.next();
+                    int dist = (int) Vector2D.subtract(opp.pos, h.pos).getLength();
+                    System.err.println("o " + opp.id + " h " + h.id + " " + dist);
+                    if (h.inRange(Spell.CONTROL_RANGE, opp.pos)) {
+                        // never mind anything else, kick the opponent out
+                        h.act = Action.SPELL;
+                        h.getSpell().control(opp.id, baseOp.pos.x, baseOp.pos.y);
+                        it.remove();
+                        opp.controlled = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        void thinkDefensive() {
+            // set main goal
+            spread();
+
+            planDefence(new ArrayList<>(heroes));
+
+            // update heroes
+            getHero(0).think(this);
+            getHero(1).think(this);
+            getHero(2).think(this);
+
+            {
+                ArrayList<Hero> list = new ArrayList<>(3);
+                for (int i = 0; i < 3; i += 1) {
+                    Hero h = getHero(i);
+                    if (h.controlled)
+                        continue;
+                    if (h.goal == Goal.IDLE)
+                        list.add(h);
+                }
+                planDefence(new ArrayList<>(list));
+                for (Hero h : list)
+                    h.think(this);
+            }
+
+            ArrayList<Hero> list = new ArrayList<>(heroes);
+            forceOpponentsOut(list);
+        }
+
+        ArrayList<Monster> getBaseAttackers() {
             ArrayList<Monster> list = new ArrayList<>();
 
             Vector2D proj;
@@ -314,6 +358,7 @@ class Player {
                         break;
                     case 2:
                         // opponent hero
+                        g.updateHero(id, x, y, shieldLife, isControlled != 0);
                         break;
                 }
             }
@@ -376,11 +421,16 @@ class Player {
         static final int SHIELD = 2;
         static final int CONTROL = 3;
         static final int WIND_EFFECT = 1280;
+        static final int CONTROL_RANGE = 2200;
         int spellType = 0;
-        Position pos;
+        final Position pos = new Position();
         int entityId = -1;
 
         Spell() {
+        }
+
+        void wind(Position p) {
+            wind(p.x, p.y);
         }
 
         void wind(int x, int y) {
@@ -433,6 +483,7 @@ class Player {
         static final int SPEED = 800;
         static final int VISION = 2200;
         static final int KILL_RADIUS = 800;
+        static final int DAMAGE = 2;
 
         final Vector2D dest = new Vector2D();
         Action act = Action.WAIT;
@@ -440,6 +491,8 @@ class Player {
         String debug = "";
         Monster follow = null;
         Spell spell = null;
+        int sp = 0;
+        boolean controlled = false;
 
         Hero(int id) {
             super(id);
@@ -474,22 +527,34 @@ class Player {
         void pushTo(double x, double y) {
             goal = Goal.PUSH_TO;
             dest.set(x, y);
-            if (inKillRadius()) {
+            if (destReached()) {
                 goal = Goal.IDLE;
                 debug = "idle";
             }
         }
 
+        boolean inRange(double range, Position pos) {
+            Vector2D v = Vector2D.subtract(this.pos, pos);
+            return v.getLengthSq() < (range * range);
+        }
+
+        boolean inRange(double range, Monster m) {
+            Position p = new Position(m.pos.x /* + m.move.x */, m.pos.y /* + m.move.y */);
+            return inRange(range, p);
+        }
+
         void think(Game g) {
             if (goal == Goal.PUSH_TO) {
+                act = Action.MOVE;
                 Monster m = g.getClosestMonster(pos);
                 if (m == null) {
-                    if (inKillRadius()) {
+                    if (destReached()) {
                         goal = Goal.IDLE;
+                        act = Action.WAIT;
                         debug = "idle";
                     } else {
                         // go to dest
-                        act = Action.MOVE;
+                        debug = "d";
                     }
                 } else {
                     // see if we should target monster instead
@@ -500,43 +565,91 @@ class Player {
                         dest.y = m.pos.y + m.move.y;
                         debug = "agro " + m.id;
                         follow = m;
+                    } else {
+                        debug = "i " + m.id;
+                        goal = Goal.IDLE;
                     }
                 }
             } else if (goal == Goal.DEFEND) {
-                if (follow != null && g.monsters.containsKey(follow.id)) {
-                    dest.set(follow.pos);
-                } else {
-                    goal = Goal.IDLE;
-                    follow = null;
-                    debug = "idle";
-                }
+                thinkDefend(g);
             } else if (goal == Goal.ATTACK) {
-                if (inKillRadius()) {
-                    act = Action.SPELL;
+                thinkAttack(g);
+            }
+        }
 
+        void castWind(Game g) {
+            act = Action.SPELL;
+            getSpell().wind(g.baseOp.pos);
+            // this may convince the monster to leave us alone, reset target
+            follow = null;
+            goal = Goal.IDLE;
+            debug = "idle";
+
+        }
+
+        void thinkDefend(Game g) {
+            for (Monster m : g.monsters.values()) {
+                if (m.canSurvive(g) && inRange(Spell.WIND_EFFECT, m)) {
+                    castWind(g);
+                    return;
+                }
+            }
+            act = Action.MOVE;
+            if (follow != null && g.monsters.containsKey(follow.id)) {
+                dest.set(follow.pos);
+                dest.add(follow.move);
+                if (follow.canSurvive(g) && inRange(Spell.WIND_EFFECT, follow)) {
+                    castWind(g);
+                }
+            } else {
+                goal = Goal.IDLE;
+                act = Action.WAIT;
+                follow = null;
+                debug = "idle";
+            }
+        }
+
+        void thinkAttack(Game g) {
+            int windCount = 0;
+            for (Monster m : g.monsters.values()) {
+                if (m.sp > 0)
+                    continue;
+                if (inRange(Spell.WIND_EFFECT, m))
+                    windCount += 1;
+            }
+            if (windCount >= 2) {
+                act = Action.SPELL;
+                getSpell().wind(g.baseOp.pos);
+                return;
+            }
+            act = Action.MOVE;
+            if (destReached()) {
+                act = Action.WAIT;
+                debug = "?";
+                if (sp == 0) {
+                    act = Action.SPELL;
+                    getSpell().shield(id);
                 }
             }
         }
 
         void kill(Monster m, float x, float y) {
             goal = Goal.DEFEND;
-            act = Action.MOVE;
             dest.set(x, y);
             debug = "kill";
-            if (inKillRadius() || m.nearBase) {
+            if (destReached() || m.nearBase) {
                 follow = m;
-                dest.set(m.pos.x, m.pos.y);
                 debug = "kill_f";
             }
         }
 
-        boolean inKillRadius() {
+        boolean destReached() {
             double dx = pos.x - dest.x;
             double dy = pos.y - dest.y;
             return (dx * dx + dy * dy) < (KILL_RADIUS * KILL_RADIUS);
         }
 
-        void attackAt(Position pos) {
+        void attackAt(Vector2D pos) {
             goal = Goal.ATTACK;
             dest.set(pos);
             debug = "";
@@ -550,6 +663,8 @@ class Player {
     static class Monster extends Entity {
         static final int SPEED = 400;
         static final int BASE_TARGET_DISTANCE = 5000;
+        int hp = 10;
+        int sp = 0;
         boolean nearBase = false;
         final Position move = new Position();
 
@@ -562,6 +677,54 @@ class Player {
             pos.y = y;
             move.x = vx;
             move.y = vy;
+            hp = health;
+            sp = shield;
+        }
+
+        boolean canSurvive(Game g) {
+            int hCount = 0;
+            for (Hero h : g.heroes) {
+                if (h.follow == this || h.inRange(Hero.KILL_RADIUS, this))
+                    hCount += 1;
+            }
+            Vector2D v = Vector2D.subtract(pos, g.base.pos);
+            v.multiply(1.0 / SPEED);
+            int turnCount = (int) v.getLength();
+            int dmg = hCount * Hero.DAMAGE * (turnCount - sp);
+            System.err.println("m " + id + " turnCount " + turnCount + " dmg " + dmg + " " + (dmg < hp));
+            return dmg < hp;
+        }
+
+        Vector2D getAttackLocation(Game g) {
+            int radiusSq = Monster.BASE_TARGET_DISTANCE * Monster.BASE_TARGET_DISTANCE;
+            Vector2D S1;
+            Vector2D h = Vector2D.subtract(g.base.pos, this.pos); // h=r.o-c.M
+            if (h.getLengthSq() > radiusSq) {
+                Vector2D e = new Vector2D(move.x, move.y); // e=ray.dir
+                e.normalize(); // e=g/|g|
+                double lf = e.dot(h); // lf=e.h
+                double s = radiusSq - h.dot(h) + lf * lf; // s=r^2-h^2+lf^2
+                if (s < 0)
+                    return null; // no intersection points ?
+                s = Math.sqrt(s); // s=sqrt(r^2-h^2+lf^2)
+
+                // int result = 0;
+                if (lf < s) // S1 behind A ?
+                {
+                    if (lf + s >= 0) // S2 before A ?}
+                    {
+                        s = -s; // swap S1 <-> S2}
+                        // result = 1; // one intersection point
+                    }
+                } // else result = 2; // 2 intersection points
+
+                S1 = e.getMultiplied(lf - s);
+                S1.add(this.pos); // S1=A+e*(lf-s)
+            } else {
+                S1 = new Vector2D(pos.x, pos.y);
+                S1.add(this.move);
+            }
+            return S1;
         }
     }
 
