@@ -24,14 +24,14 @@ class Player {
         final ArrayList<Hero> heroes;
         final int heroCount;
         final Base base;
-        final Base baseOp;
+        final Base baseOpp;
         int turn = 0;
 
         Game(int x, int y, int n) {
             base = new Base(x, y);
-            baseOp = (y < 4500) ? new Base(17630, 9000) : new Base(0, 0);
+            baseOpp = (y < 4500) ? new Base(17630, 9000) : new Base(0, 0);
             System.err.println("base = " + base.pos);
-            System.err.println("baseOp = " + baseOp.pos);
+            System.err.println("baseOpp = " + baseOpp.pos);
             heroCount = n;
             heroes = new ArrayList<>(heroCount);
         }
@@ -105,7 +105,7 @@ class Player {
                 if (h.goal == Goal.ATTACK)
                     att = h;
             if (att == null)
-                att = getClosest(list, baseOp.pos.x, baseOp.pos.y);
+                att = getClosest(list, baseOpp.pos.x, baseOpp.pos.y);
             list.remove(att);
             Hero top = list.get(1);
             Hero bot = list.get(0);
@@ -115,7 +115,7 @@ class Player {
             final Vector2D v = new Vector2D();
             // spread defence
             {
-                v.set(baseOp.pos);
+                v.set(baseOpp.pos);
                 v.subtract(base.pos);
                 v.normalize();
                 v.multiply(5000);
@@ -144,10 +144,11 @@ class Player {
             // move attacker in enemy base
             {
                 v.set(base.pos);
-                v.subtract(baseOp.pos);
+                v.subtract(baseOpp.pos);
                 v.normalize();
                 v.multiply(2000);
                 v.rotateBy(Math.toRadians(15));
+                v.add(baseOpp.pos);
                 att.attackAt(v);
             }
             att.think(this);
@@ -202,7 +203,7 @@ class Player {
                     if (h.inRange(Spell.CONTROL_RANGE, opp.pos)) {
                         // never mind anything else, kick the opponent out
                         h.act = Action.SPELL;
-                        h.getSpell().control(opp.id, baseOp.pos.x, baseOp.pos.y);
+                        h.getSpell().control(opp.id, baseOpp.pos.x, baseOpp.pos.y);
                         it.remove();
                         opp.controlled = true;
                         break;
@@ -267,7 +268,7 @@ class Player {
             Hero bot = getHero(2);
 
             final Vector2D v = new Vector2D();
-            v.set(baseOp.pos.x, baseOp.pos.y);
+            v.set(baseOpp.pos.x, baseOpp.pos.y);
             v.subtract(base.pos.x, base.pos.y);
             v.normalize();
             v.multiply(6000);
@@ -373,7 +374,7 @@ class Player {
                 Hero h = g.getHero(i);
                 switch (h.getAction()) {
                     case WAIT:
-                        System.out.println("WAIT");
+                        System.out.println("WAIT " + h.debug);
                         break;
                     case MOVE:
                         h.getTargetPos(pos);
@@ -538,7 +539,7 @@ class Player {
             return v.getLengthSq() < (range * range);
         }
 
-        boolean inRange(double range, Monster m) {
+        boolean inRange(double range, Entity m) {
             Position p = new Position(m.pos.x /* + m.move.x */, m.pos.y /* + m.move.y */);
             return inRange(range, p);
         }
@@ -579,7 +580,7 @@ class Player {
 
         void castWind(Game g) {
             act = Action.SPELL;
-            getSpell().wind(g.baseOp.pos);
+            getSpell().wind(g.baseOpp.pos);
             // this may convince the monster to leave us alone, reset target
             follow = null;
             goal = Goal.IDLE;
@@ -619,8 +620,21 @@ class Player {
             }
             if (windCount >= 2) {
                 act = Action.SPELL;
-                getSpell().wind(g.baseOp.pos);
+                getSpell().wind(g.baseOpp.pos);
                 return;
+            }
+            if (sp > 0) {
+                int entityId = -1;
+                for (int i = 3; i < g.heroes.size(); i += 1) {
+                    Hero h = g.heroes.get(i);
+                    if (h.sp == 0 && inRange(Spell.CONTROL_RANGE, h))
+                        entityId = h.id;
+                }
+                if (entityId != -1) {
+                    act = Action.SPELL;
+                    getSpell().control(entityId, g.base.pos.x, g.base.pos.y);
+                    return;
+                }
             }
             act = Action.MOVE;
             if (destReached()) {
