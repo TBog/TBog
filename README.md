@@ -14,3 +14,6 @@ Here are some ideas to get you started:
 - 😄 Pronouns: ...
 - ⚡ Fun fact: ...
 -->
+
+- 🔭 I’m currently working on [TinyBit Launcher](https://github.com/TBog/TBLauncher)
+- ☕ You can buy me a [coffee](https://www.buymeacoffee.com/tbog) if you so choose
