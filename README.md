@@ -17,3 +17,4 @@ Here are some ideas to get you started:
 
 - 🔭 I’m currently working on [TinyBit Launcher](https://github.com/TBog/TBLauncher)
 - ☕ You can buy me a [coffee](https://www.buymeacoffee.com/tbog) if you so choose
+- 🕸 Where to find me: choose any [bio link](https://tbog.bio.link/)
